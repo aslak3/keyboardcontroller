@@ -71,11 +71,11 @@ int main(void)
 			/* Set CA1 low. */
 			PORTE = 0x00;
 			/* Wait for CA2 to go high. */
-			while ((PINE & 0x02) == 0x02) _delay_us(1);
+			while ((PINE & 0x02) == 0x02) _delay_us(5);
 			/* Set CA1 high again. */
 			PORTE = 0x01;
 			
-			_delay_us(1);
+			_delay_us(5);
 		}
 
 		/* After the last scancode has gone, set a dummy code. */		

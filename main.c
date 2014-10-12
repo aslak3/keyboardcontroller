@@ -1,6 +1,11 @@
-/* Keyboard controller
+/* Keyboard controller: C64 matrix to 8 bit bus with handshaking.
  *
- * For the ATMEGA8 and perhaps others.
+ * PORTA - Outputs to keyboard A-G
+ * PORTB - Inputs from keyboard 0-7
+ * PORTC - 8 bit bus to VIA
+ * PORTE - 0: CA1, 1: CA2 on VIA
+ *
+ * For the ATMEGA8515 and perhaps others.
  *
  * (c) 2014 Lawrence Manning. */
 
@@ -14,7 +19,7 @@
 #include <util/delay.h>
 #include <avr/eeprom.h>
 
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 64
 
 unsigned char keybuffer[BUFFER_SIZE];
 unsigned char keystate[8];
@@ -25,6 +30,8 @@ void fillbuffer(void);
 
 int main(void)
 {
+	unsigned char pointerdiff;
+
 	/* DDRA is setup for each scan. */
 	DDRB = 0x00; /* Inputs from keyboard: 0-7. */
 	DDRC = 0xff; /* VIA bus */
@@ -35,8 +42,7 @@ int main(void)
 	OCR1A   = 625; // 200Hz
 	TIMSK |= (1 << OCIE1A); // Enable CTC interrupt
 
-	/* Input lines will be set as pullups, output scan always 0. */
-	PORTA = 0;
+	PORTA = 0; /* DDRA is used to scan. Output bit will always be 0. */
 
 	PORTB = 0xff; /* Pullups. */
 	PORTE = 0x01; /* Clear CA1, no data. */
@@ -50,21 +56,30 @@ int main(void)
 
 	while (1)
 	{
-		if (readpointer != writepointer)
+		/* See if there is a scancode available. */
+		cli();
+		pointerdiff = writepointer - readpointer;
+		sei();
+
+		if (pointerdiff)
 		{
+			/* If so, put the first one out. */
 			cli();
 			PORTC = keybuffer[readpointer++];
 			sei();
 			
+			/* Set CA1 low. */
 			PORTE = 0x00;
+			/* Wait for CA2 to go high. */
 			while ((PINE & 0x02) == 0x02) _delay_us(1);
+			/* Set CA1 high again. */
 			PORTE = 0x01;
+			
 			_delay_us(1);
 		}
-		
-		PORTC = 0x40;
 
-		_delay_ms(10);
+		/* After the last scancode has gone, set a dummy code. */		
+		PORTC = 0x40;
 	}
 
 	return 0; /* Not reached. */

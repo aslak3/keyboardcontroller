@@ -35,6 +35,16 @@
 
 #define GETSCAN(row, bank, col) ((row << 4) | (bank << 3) | col)
 
+#define COM_INIT 0
+#define COM_CAPSLOCKLED_ON 1
+#define COM_CAPSLOCKLED_OFF 2
+#define COM_REDLED_ON 3
+#define COM_REDLED_OFF 4
+#define COM_GREENLED_ON 5
+#define COM_GREENLED_OFF 6
+#define COM_BLUELED_ON 7
+#define COM_BLUELED_OFF 8
+
 /* Serial related */
 void writechar(char c);
 void writestring(char *string);
@@ -45,10 +55,12 @@ unsigned char keystate[16]; /* bit map of scancodes */
 unsigned char readpointer = 0;
 unsigned char writepointer = 0;
 
-void fillbuffer(void);
+void initkeybuffer(void);
 
 int main(void)
 {
+	unsigned char incommand;
+
 	/* Configure the serial port UART */
 	UBRRL = BAUD_PRESCALE;
 	UBRRH = (BAUD_PRESCALE >> 8);
@@ -57,10 +69,11 @@ int main(void)
 
 	/* DDRA is setup for each scan. */
 	DDRA = 0b00000000; /* Inputs from keyboard: Column Low */
-	DDRB = 0b10000000; /* Inputs from keyboard: Column High */
+	DDRB = 0b10000000; /* Inputs from keyboard: Column High, bit 7 is
+	                    * caps lock LED output. */
 	DDRC = 0b00000000; /* Inputs from keyboard: Column Metas */
 	DDRD = 0b11111100; /* Outputs to keyboard: Rows, and INT */
-	DDRE = 0b00000111; /* -----BGR */
+	DDRE = 0b00000111; /* -----RGB */
 
 	TCCR1B |= (1 << WGM12); // CTC
 	TCCR1B |= ((1 << CS10) | (1 << CS11)); // Set up timer at Fcpu/64
@@ -72,14 +85,13 @@ int main(void)
 	PORTC = 0b11111111; /* Pullups for Column Metas */
 	PORTD = 0x04; /* High INT. */
 	
-	char msg[100];
-	
-	memset(keystate, 0, 16);
+	initkeybuffer();
 
 	sei();
 
-	PORTE = 0x1;
-	
+	int keydowntimer = 0;
+	unsigned char lastevent = 0;
+
 	while (1)
 	{
 		/* See if there is a scancode available. */
@@ -90,30 +102,71 @@ int main(void)
 		if (pointerdiff)
 		{
 			/* If so, put the first one out. */
-			writechar(keybuffer[readpointer]);
-//			snprintf(msg, BUFFER_SIZE, "%02x\r\n", (unsigned char) keybuffer[readpointer]);
-//			writestring(msg);
+			lastevent = keybuffer[readpointer];
+			writechar(lastevent);
 
-			if (keybuffer[readpointer] == 0x30)
-				PORTB = (~PORTB & 0x80) | 0x7f;
-			if (keybuffer[readpointer] == 0x24)
-				PORTE ^= 0x01;
-			if (keybuffer[readpointer] == 0x35)
-				PORTE ^= 0x02;
-			if (keybuffer[readpointer] == 0x45)
-				PORTE ^= 0x04;
-			if (keybuffer[readpointer] == 0x0e)
-				PORTD ^= 0x04;
-			
 			readpointer = (readpointer + 1) & (BUFFER_SIZE - 1);
+
+			if (!(lastevent & 0b10000000))
+				keydowntimer = 200;
+			else
+				keydowntimer = 0;
 		}
 
-//		readchar();
+		if (keydowntimer > 0)
+		{
+			keydowntimer--;
+			if (keydowntimer == 0)
+			{
+				writechar(lastevent);
+				keydowntimer = 100;
+			}
+		}
+
+		if (UCSRA & (1 << RXC))
+		{
+			incommand = UDR;
+
+			switch (incommand)
+			{
+				case COM_INIT:
+					initkeybuffer();
+					break;
+				case COM_CAPSLOCKLED_ON:
+					PORTB |= 0x80;
+					break;
+				case COM_CAPSLOCKLED_OFF:
+					PORTB &= ~0x80;
+					break;
+				case COM_REDLED_ON:
+					PORTE |= 0x04;
+					break;
+				case COM_REDLED_OFF:
+					PORTE &= ~0x04;
+					break;
+				case COM_GREENLED_ON:
+					PORTE |= 0x02;
+					break;
+				case COM_GREENLED_OFF:
+					PORTE &= ~0x02;
+					break;
+				case COM_BLUELED_ON:
+					PORTE |= 0x01;
+					break;
+				case COM_BLUELED_OFF:
+					PORTE &= ~0x01;
+					break;
+				
+				default:
+					break;
+			}
+		}
+
+		_delay_ms(1);
 	}
 
 	return 0; /* Not reached. */
 }
-
 
 void writechar(char c)
 {
@@ -143,6 +196,18 @@ char readchar(void)
 	x = UDR;
 
 	return x;
+}
+
+void initkeybuffer(void)
+{
+	memset(keystate, 0, 16);
+
+	readpointer = 0;
+	writepointer = 0;
+
+	/* Turn the RGB and caps lock LEDs off. */
+	PORTE = 0x00;
+	PORTB &= ~0x80;
 }
 
 /* The thing that makes it all work: timer interrupt. */

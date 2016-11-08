@@ -35,15 +35,17 @@
 
 #define GETSCAN(row, bank, col) ((row << 4) | (bank << 3) | col)
 
+/* Commands. */
 #define COM_INIT 0
-#define COM_CAPSLOCKLED_ON 1
-#define COM_CAPSLOCKLED_OFF 2
-#define COM_REDLED_ON 3
-#define COM_REDLED_OFF 4
-#define COM_GREENLED_ON 5
-#define COM_GREENLED_OFF 6
-#define COM_BLUELED_ON 7
-#define COM_BLUELED_OFF 8
+#define COM_RED_LED_ON 1
+#define COM_RED_LED_OFF 2
+#define COM_GREEN_LED_ON 3
+#define COM_GREEN_LED_OFF 4
+#define COM_BLUE_LED_ON 5
+#define COM_BLUE_LED_OFF 6
+
+/* Special keys scancodes. */
+#define KEY_CAPS_LOCK 0x30
 
 /* Serial related */
 void writechar(char c);
@@ -70,7 +72,7 @@ int main(void)
 	/* DDRA is setup for each scan. */
 	DDRA = 0b00000000; /* Inputs from keyboard: Column Low */
 	DDRB = 0b10000000; /* Inputs from keyboard: Column High, bit 7 is
-	                    * caps lock LED output. */
+	                    * caps lock _LED output. */
 	DDRC = 0b00000000; /* Inputs from keyboard: Column Metas */
 	DDRD = 0b11111100; /* Outputs to keyboard: Rows, and INT */
 	DDRE = 0b00000111; /* -----RGB */
@@ -91,6 +93,7 @@ int main(void)
 
 	int keydowntimer = 0;
 	unsigned char lastevent = 0;
+	int capslockon = 0;
 
 	while (1)
 	{
@@ -103,57 +106,92 @@ int main(void)
 		{
 			/* If so, put the first one out. */
 			lastevent = keybuffer[readpointer];
-			writechar(lastevent);
-
 			readpointer = (readpointer + 1) & (BUFFER_SIZE - 1);
 
-			if (!(lastevent & 0b10000000))
-				keydowntimer = 200;
+			if (
+				!(lastevent & 0b10000000) &&
+				((lastevent & 0x70) != 0x50) &&
+				(lastevent != KEY_CAPS_LOCK)
+			) {
+				keydowntimer = 250;
+			}
 			else
 				keydowntimer = 0;
+
+			/* Caps lock handling. Caps lock up or down? */
+			if ((lastevent & 0b01111111) == KEY_CAPS_LOCK)
+			{
+				/* Down? */
+				if (!(lastevent & 0b10000000))
+				{
+					if (!capslockon)
+					{
+						/* If it was off before, make it on and
+						 * send key down. */
+						writechar(KEY_CAPS_LOCK);
+						PORTB |= 0x80;
+						capslockon = 1;
+					}
+					else
+					{
+						/* If it was on before, make it off
+						 * and send key up. */
+						writechar(KEY_CAPS_LOCK | 0x80);
+						PORTB &= ~0x80;
+						capslockon = 0;
+					}
+				}
+			}
+			else
+			{
+				/* Otherwise (normal key and not caps lock going
+				 * up), send the key scancode. */
+				writechar(lastevent);
+			}
 		}
 
 		if (keydowntimer > 0)
 		{
+			/* Timer running, decrement timer. */
 			keydowntimer--;
 			if (keydowntimer == 0)
 			{
+				/* Until timer is zero, when we send the last
+				 * scancode and reset to the (shorter) repeat
+				 * timer. */
 				writechar(lastevent);
 				keydowntimer = 100;
 			}
 		}
 
+		/* See if there is a command byte available. */
 		if (UCSRA & (1 << RXC))
 		{
+			/* Grab it. */
 			incommand = UDR;
 
 			switch (incommand)
 			{
 				case COM_INIT:
 					initkeybuffer();
+					capslockon = 0;
 					break;
-				case COM_CAPSLOCKLED_ON:
-					PORTB |= 0x80;
-					break;
-				case COM_CAPSLOCKLED_OFF:
-					PORTB &= ~0x80;
-					break;
-				case COM_REDLED_ON:
+				case COM_RED_LED_ON:
 					PORTE |= 0x04;
 					break;
-				case COM_REDLED_OFF:
+				case COM_RED_LED_OFF:
 					PORTE &= ~0x04;
 					break;
-				case COM_GREENLED_ON:
+				case COM_GREEN_LED_ON:
 					PORTE |= 0x02;
 					break;
-				case COM_GREENLED_OFF:
+				case COM_GREEN_LED_OFF:
 					PORTE &= ~0x02;
 					break;
-				case COM_BLUELED_ON:
+				case COM_BLUE_LED_ON:
 					PORTE |= 0x01;
 					break;
-				case COM_BLUELED_OFF:
+				case COM_BLUE_LED_OFF:
 					PORTE &= ~0x01;
 					break;
 				

@@ -36,16 +36,26 @@
 #define GETSCAN(row, bank, col) ((row << 4) | (bank << 3) | col)
 
 /* Commands. */
-#define COM_INIT 0
+#define COM_TYPE_MASK 0b11000000
+#define COM_TYPE_REGULAR 0b00000000
+#define COM_TYPE_DELAY 0b01000000
+#define COM_TYPE_RATE 0b10000000
+#define COM_VALUE_MASK 0b00111111
+
+#define COM_RED_LED_OFF 0
 #define COM_RED_LED_ON 1
-#define COM_RED_LED_OFF 2
+#define COM_GREEN_LED_OFF 2
 #define COM_GREEN_LED_ON 3
-#define COM_GREEN_LED_OFF 4
+#define COM_BLUE_LED_OFF 4
 #define COM_BLUE_LED_ON 5
-#define COM_BLUE_LED_OFF 6
+#define COM_INIT 6
 
 /* Special keys scancodes. */
 #define KEY_CAPS_LOCK 0x30
+
+/* Default typematic speeds. */
+#define DEFAULT_TYPEMATIC_DELAY (63 << 2)
+#define DEFAULT_TYPEMATIC_RATE (25 << 2)
 
 /* Serial related */
 void writechar(char c);
@@ -56,13 +66,13 @@ unsigned char keybuffer[BUFFER_SIZE];
 unsigned char keystate[16]; /* bit map of scancodes */
 unsigned char readpointer = 0;
 unsigned char writepointer = 0;
+unsigned char typematicdelay = 0;
+unsigned char typematicrate = 0;
 
 void initkeybuffer(void);
 
 int main(void)
 {
-	unsigned char incommand;
-
 	/* Configure the serial port UART */
 	UBRRL = BAUD_PRESCALE;
 	UBRRH = (BAUD_PRESCALE >> 8);
@@ -113,7 +123,7 @@ int main(void)
 				((lastevent & 0x70) != 0x50) &&
 				(lastevent != KEY_CAPS_LOCK)
 			) {
-				keydowntimer = 250;
+				keydowntimer = typematicdelay;
 			}
 			else
 				keydowntimer = 0;
@@ -168,33 +178,51 @@ int main(void)
 		if (UCSRA & (1 << RXC))
 		{
 			/* Grab it. */
-			incommand = UDR;
+			unsigned char incommand = UDR;
 
-			switch (incommand)
+			/* Split the command. */
+			unsigned char commandtype = incommand & COM_TYPE_MASK;
+			unsigned char commandvalue = incommand & COM_VALUE_MASK;
+
+			switch (commandtype)
 			{
-				case COM_INIT:
-					initkeybuffer();
-					capslockon = 0;
+				case COM_TYPE_REGULAR:
+					switch (commandvalue)
+					{
+						case COM_RED_LED_OFF:
+							PORTE &= ~0x04;
+							break;
+						case COM_RED_LED_ON:
+							PORTE |= 0x04;
+							break;
+						case COM_GREEN_LED_OFF:
+							PORTE &= ~0x02;
+							break;
+						case COM_GREEN_LED_ON:
+							PORTE |= 0x02;
+							break;
+						case COM_BLUE_LED_OFF:
+							PORTE &= ~0x01;
+							break;
+						case COM_BLUE_LED_ON:
+							PORTE |= 0x01;
+							break;
+						case COM_INIT:
+							initkeybuffer();
+							capslockon = 0;
+							break;
+						default:
+							break;
+					}
 					break;
-				case COM_RED_LED_ON:
-					PORTE |= 0x04;
+				/* Other commands have the value in the low
+				 * six bits. */
+				case COM_TYPE_DELAY:
+					typematicdelay = commandvalue << 2;
 					break;
-				case COM_RED_LED_OFF:
-					PORTE &= ~0x04;
+				case COM_TYPE_RATE:
+					typematicrate = commandvalue << 2;
 					break;
-				case COM_GREEN_LED_ON:
-					PORTE |= 0x02;
-					break;
-				case COM_GREEN_LED_OFF:
-					PORTE &= ~0x02;
-					break;
-				case COM_BLUE_LED_ON:
-					PORTE |= 0x01;
-					break;
-				case COM_BLUE_LED_OFF:
-					PORTE &= ~0x01;
-					break;
-				
 				default:
 					break;
 			}
@@ -242,6 +270,9 @@ void initkeybuffer(void)
 
 	readpointer = 0;
 	writepointer = 0;
+
+	typematicdelay = DEFAULT_TYPEMATIC_DELAY;
+	typematicrate = DEFAULT_TYPEMATIC_RATE;
 
 	/* Turn the RGB and caps lock LEDs off. */
 	PORTE = 0x00;

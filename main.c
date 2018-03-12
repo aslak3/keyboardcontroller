@@ -1,4 +1,4 @@
-/* Keyboard controller: A1200 matrix to UART.
+/* Keyboard controller: A600 matrix to UART.
  *
  * PORTA - Input Coloum Low
  * PORTB - Input Column High Caps LED on bit 7
@@ -16,7 +16,7 @@
  *
  * For the ATMEGA8515 and perhaps others.
  *
- * (c) 2016 Lawrence Manning. */
+ * (c) 2016-2018 Lawrence Manning, lawrence@aslak.net. */
 
 #include <stdio.h>
 #include <string.h>
@@ -28,11 +28,16 @@
 #include <util/delay.h>
 #include <avr/eeprom.h>
 
-#define BUFFER_SIZE 64
+/* Size of event buffer; filled by timer interrupt, emptied by main program. */
+#define BUFFER_SIZE 16
+
+/* Time a key must be stable (stopped bouncing) to generate an event. */
+#define STEADY_THRESH 5
 
 #define USART_BAUDRATE 9600
 #define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 16UL))) - 1)
 
+/* Macro for obtaining a scancode from row, bank and column values. */
 #define GETSCAN(row, bank, col) ((row << 4) | (bank << 3) | col)
 
 /* Commands. */
@@ -57,19 +62,30 @@
 #define DEFAULT_TYPEMATIC_DELAY (63 << 2)
 #define DEFAULT_TYPEMATIC_RATE (25 << 2)
 
-/* Serial related */
+/* Serial related. */
 void writechar(char c);
 void writestring(char *string);
 char readchar(void);
 
-unsigned char keybuffer[BUFFER_SIZE];
-unsigned char keystate[16]; /* bit map of scancodes */
+/* Other local subs. */
+void initkeybuffer(void);
+
+/* GLOBALS */
+
+/* Event buffer stuff. */
 unsigned char readpointer = 0;
 unsigned char writepointer = 0;
+unsigned char keybuffer[BUFFER_SIZE];
+
+/* Bitmap of scancodes. */
+unsigned char keystate[128 / 8];
+
+/* Debouncing counters, one per scancode (key) */
+unsigned char steadycounts[128];
+
+/* Typematic speed values. */
 unsigned char typematicdelay = 0;
 unsigned char typematicrate = 0;
-
-void initkeybuffer(void);
 
 int main(void)
 {
@@ -271,6 +287,8 @@ void initkeybuffer(void)
 	readpointer = 0;
 	writepointer = 0;
 
+	memset(steadycounts, 0, 128);
+
 	typematicdelay = DEFAULT_TYPEMATIC_DELAY;
 	typematicrate = DEFAULT_TYPEMATIC_RATE;
 
@@ -318,14 +336,15 @@ ISR(TIMER1_COMPA_vect)
 			for (int col = 0; col < (bank < 1 ? 8 : 7); col++)
 			{
 				unsigned char scancode = GETSCAN(row, bank, col);
+
 				if (!(in & instrobe))
 				{
 					/* Key down */
 					if (!(keystate[scancode >> 3] & instrobe))
 					{
-						keybuffer[writepointer] = scancode;
+						/* Start the debouncing counter */
+						steadycounts[scancode] = 1;	
 						keystate[scancode >> 3] |= instrobe;
-						writepointer = (writepointer + 1) & (BUFFER_SIZE - 1);
 					}
 				}
 				else
@@ -333,10 +352,33 @@ ISR(TIMER1_COMPA_vect)
 					/* Key up */
 					if ((keystate[scancode >> 3] & instrobe))
 					{
-						keybuffer[writepointer] = scancode | 0b10000000;
+						/* Start the debouncing counter */
+						steadycounts[scancode] = 1;
 						keystate[scancode >> 3] &= ~instrobe;
-						writepointer = (writepointer + 1) & (BUFFER_SIZE - 1);
 					}
+				}
+
+				if (steadycounts[scancode] > STEADY_THRESH)
+				{
+					/* Key is "stuck" up, or down? Generate an event. */
+					if (!(keystate[scancode >> 3] & instrobe))
+					{
+						keybuffer[writepointer] = scancode | 0b10000000;
+					}
+					if ((keystate[scancode >> 3] & instrobe))
+					{
+						keybuffer[writepointer] = scancode;
+					}
+
+					/* Advance the writepointer, and stop the debounce
+					 * counter. */
+					writepointer = (writepointer + 1) & (BUFFER_SIZE - 1);
+					steadycounts[scancode] = 0;					
+				}
+				else if (steadycounts[scancode] > 0)
+				{
+					/* Counter is running, so count! */
+					steadycounts[scancode]++;
 				}
 
 				instrobe <<= 1;

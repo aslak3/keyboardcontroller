@@ -61,12 +61,13 @@ Ketboard events are sent via the UART as bytes in the following format:
 DRRRCCCC
 ````
 
-D, key direction = D=0 down, D=1 up
-R, row = R=0-4 -> regular, R=5 = metas
-C, column = bits 2,1,0 -> column, bit 3 -> 0 for low set, 1 for high set
+* D, key direction = D=0 down, D=1 up
+* R, row = R=0-4 -> regular, R=5 = metas
+* C, column = bits 2,1,0 -> column, bit 3 -> 0 for low set, 1 for high set
 
 Mappings from the scancode to the labeled key marking would be great, but I
-have not yet produced such a list.
+have not yet produced such a list, save for the 6809 code which translates
+the scancode to ASCII.
 
 # Command bytes
 
@@ -87,6 +88,6 @@ The COM_TYPE_DELAY and COM_TYPE_RATE set the typematic delay and typematic
 rate values; the time taken for a key repeat to start after the first key
 press, and the rate at which keys will subsequently repeat.  The "x" values
 give a range of 0 to 63, which is in units of 4ms.  The default values are
-200 and 100ms respectively.
+200 and 100ms respectively. The rest of the commands are self-explanatory.
 
 Note that no acknowledgement of a command is currently given.
